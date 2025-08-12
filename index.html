@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VGtar</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎸</text></svg>">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Roboto Mono', monospace;
+            touch-action: manipulation;
+        }
+        .guitar-neck {
+            background: linear-gradient(to right, #6b3e26, #54311d);
+            border: 4px solid #3a2211;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+            padding: 0;
+            transition: background 0.1s ease-out;
+        }
+        .guitar-neck.slapped {
+            background: linear-gradient(to right, #8a5e45, #734f3c);
+        }
+        .string-row {
+            display: flex;
+            align-items: center;
+            height: 16.66%;
+            position: relative;
+            transition: background-color 0.2s;
+        }
+        .string-row.selected {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+        .string-line {
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            background: linear-gradient(to right, #e0e0e0, #c0c0c0, #e0e0e0);
+            z-index: 1;
+        }
+        .fret-container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+            position: relative;
+            z-index: 2;
+        }
+        .fret-cell {
+            height: 100%;
+            border-right: 4px solid #a0a0a0;
+            box-sizing: border-box;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .fret-cell:first-child {
+             border-left: 10px solid #f0e6d2;
+        }
+        .fret-cell.played .fret-dot {
+            opacity: 1;
+        }
+        .fret-dot {
+            width: 14px;
+            height: 14px;
+            background-color: #ffca28;
+            border-radius: 50%;
+            opacity: 0;
+            transition: opacity 0.1s;
+            box-shadow: 0 0 10px rgba(255, 202, 40, 0.7);
+        }
+        .vibrating {
+            animation: vibrate 0.2s linear infinite alternate;
+        }
+        @keyframes vibrate {
+            0% { transform: translateY(-50%) scaleY(1.5); }
+            50% { transform: translateY(calc(-50% - 2px)) scaleY(1.6); }
+            100% { transform: translateY(calc(-50% + 2px)) scaleY(1.5); }
+        }
+        .btn-action, .mode-btn, .tab-btn {
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .btn-action:active, .mode-btn:active, .tab-btn:active {
+            transform: translateY(2px);
+            box-shadow: 0 2px 3px rgba(0,0,0,0.1);
+        }
+        .btn-action:disabled, .mode-btn:disabled, .tab-btn:disabled {
+            background-color: #999;
+            cursor: not-allowed;
+        }
+        .mode-btn.active, .tab-btn.active {
+            background-color: #1d4ed8;
+            color: white;
+        }
+        .indicator {
+            transition: opacity 0.3s;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex flex-col items-center justify-center min-h-screen p-2 sm:p-4">
+
+    <div class="w-full max-w-5xl mx-auto">
+        <h1 class="text-2xl sm:text-3xl md:text-4xl font-bold text-center text-gray-800 mb-4">Virtual Guitar</h1>
+        
+        <!-- Guitar Body and Neck -->
+        <div class="relative flex items-center mb-4">
+            <div id="guitar-neck" class="guitar-neck relative w-full h-48 sm:h-64 rounded-lg flex flex-col justify-between z-10">
+                <div id="fretboard-container" class="w-full h-full"></div>
+            </div>
+        </div>
+        
+        <div id="start-audio-container" class="text-center my-4">
+            <button id="start-audio" class="btn-action bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg text-lg sm:text-xl">Start Audio</button>
+        </div>
+
+        <!-- Main Control Panel -->
+        <div id="control-panel" class="hidden w-full max-w-4xl mx-auto bg-white rounded-lg shadow-lg p-2 sm:p-4">
+            <!-- Mode Tabs -->
+            <div class="flex border-b mb-4">
+                <button id="strum-mode-btn" class="tab-btn -mb-px py-2 px-4 border-b-2 border-transparent font-semibold text-sm sm:text-base">Strumming</button>
+                <button id="pluck-mode-btn" class="tab-btn py-2 px-4 border-b-2 border-transparent font-semibold text-sm sm:text-base">Plucking</button>
+            </div>
+
+            <!-- Strumming Mode Content -->
+            <div id="strumming-tab" class="tab-content">
+                <p class="text-center text-gray-600 mb-4 text-xs sm:text-sm">`Shift` for Major, `1` for Sharp, `7` for 7th, `Space` for slaps. Use Arrow Keys to strum.</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Left Column: Chords & Manual Strum -->
+                    <div class="flex flex-col gap-4">
+                        <div id="chord-status" class="text-center h-8 flex items-center justify-center gap-2">
+                            <span id="chord-display-text" class="text-base sm:text-lg font-semibold text-gray-700 bg-gray-100 px-3 py-2 rounded-lg">No Chord Selected</span>
+                            <span id="sharp-indicator" class="indicator text-base sm:text-lg font-bold text-blue-500 opacity-0">#</span>
+                            <span id="seventh-indicator" class="indicator text-base sm:text-lg font-bold text-red-500 opacity-0">7</span>
+                        </div>
+                        <div id="capo-control" class="p-2">
+                             <label for="capo-slider" class="block text-sm text-center font-medium text-gray-700">Capo: <span id="capo-display">0</span></label>
+                             <input type="range" id="capo-slider" min="0" max="7" value="0" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                        </div>
+                        <div id="controls" class="flex justify-center items-center gap-2 sm:gap-4">
+                            <button id="strum-down-btn" class="btn-action bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 sm:py-3 sm:px-6 rounded-lg text-sm sm:text-base">Down</button>
+                            <button id="strum-up-btn" class="btn-action bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 sm:py-3 sm:px-6 rounded-lg text-sm sm:text-base">Up</button>
+                            <button id="clear-chord-btn" class="btn-action bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 sm:py-3 sm:px-6 rounded-lg text-sm sm:text-base">Clear</button>
+                        </div>
+                    </div>
+                    <!-- Right Column: Auto Strummer -->
+                    <div id="auto-strum-controls" class="p-4 bg-gray-50 rounded-lg">
+                        <h3 class="text-md font-bold text-center text-gray-700 mb-2">Auto-Strummer</h3>
+                        <div class="flex flex-col gap-4">
+                            <div>
+                                <label for="pattern-input" class="block text-xs font-medium text-gray-700">Pattern (D, U, S, -):</label>
+                                <div class="flex gap-2 mt-1">
+                                    <input type="text" id="pattern-input" value="D-DU-S-U" class="flex-grow py-1 px-2 border border-gray-300 rounded-md shadow-sm text-sm">
+                                    <button id="save-pattern-btn" class="btn-action bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-1 px-3 rounded-lg text-sm">Save</button>
+                                </div>
+                            </div>
+                            <div>
+                                <label for="tempo-slider" class="block text-xs font-medium text-gray-700">Tempo: <span id="tempo-display">120</span> BPM</label>
+                                <input type="range" id="tempo-slider" min="60" max="180" value="120" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                            </div>
+                            <button id="toggle-auto-strum" class="btn-action bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-4 rounded-lg">Start</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Plucking Mode Content -->
+            <div id="plucking-tab" class="tab-content">
+                 <p class="text-center text-gray-600 mb-4 text-xs sm:text-sm">Select string (A,S,D,F,G,H), play fret (0-9,-,=). `Shift+Fret` for slides.</p>
+                 <div id="plucking-ui" class="p-4 bg-gray-50 rounded-lg w-full max-w-md mx-auto">
+                    <h3 class="text-md font-bold text-center text-gray-700 mb-2">Plucking Scripter</h3>
+                    <div class="flex flex-col gap-4">
+                        <div>
+                            <label for="script-input" class="block text-xs font-medium text-gray-700">Script: e.g., A(0) S(3) D(5)</label>
+                            <textarea id="script-input" rows="2" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm" placeholder="A(0) A(0) D(2) D(2) F(2) F(2) D(2) - F(0) F(0) D(0) D(0) S(1) S(1) A(0)"></textarea>
+                        </div>
+                         <div>
+                            <label for="pluck-tempo-slider" class="block text-xs font-medium text-gray-700">Tempo: <span id="pluck-tempo-display">120</span> BPM</label>
+                            <input type="range" id="pluck-tempo-slider" min="60" max="180" value="120" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                        </div>
+                        <button id="toggle-script-btn" class="btn-action bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg">Play Script</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Message Box -->
+    <div id="message-box" class="hidden fixed top-0 left-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white p-6 rounded-lg shadow-lg text-center max-w-sm">
+            <p id="message-text" class="mb-4 text-gray-800">Message goes here</p>
+            <button id="message-ok-btn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-6 rounded">OK</button>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const instructions = document.getElementById('instructions');
+        const strumModeBtn = document.getElementById('strum-mode-btn');
+        const pluckModeBtn = document.getElementById('pluck-mode-btn');
+        const strummingTab = document.getElementById('strumming-tab');
+        const pluckingTab = document.getElementById('plucking-tab');
+        const fretboardContainer = document.getElementById('fretboard-container');
+        const controlPanel = document.getElementById('control-panel');
+        const guitarNeck = document.getElementById('guitar-neck');
+        // Strumming UI elements
+        const chordDisplayText = document.getElementById('chord-display-text');
+        const clearChordBtn = document.getElementById('clear-chord-btn');
+        const sharpIndicator = document.getElementById('sharp-indicator');
+        const seventhIndicator = document.getElementById('seventh-indicator');
+        const patternInput = document.getElementById('pattern-input');
+        const savePatternBtn = document.getElementById('save-pattern-btn');
+        const tempoSlider = document.getElementById('tempo-slider');
+        const tempoDisplay = document.getElementById('tempo-display');
+        const toggleAutoStrumBtn = document.getElementById('toggle-auto-strum');
+        const strumDownBtn = document.getElementById('strum-down-btn');
+        const strumUpBtn = document.getElementById('strum-up-btn');
+        const capoSlider = document.getElementById('capo-slider');
+        const capoDisplay = document.getElementById('capo-display');
+        // Plucking UI elements
+        const scriptInput = document.getElementById('script-input');
+        const toggleScriptBtn = document.getElementById('toggle-script-btn');
+        const pluckTempoSlider = document.getElementById('pluck-tempo-slider');
+        const pluckTempoDisplay = document.getElementById('pluck-tempo-display');
+        // General UI
+        const startAudioBtn = document.getElementById('start-audio');
+        const startAudioContainer = document.getElementById('start-audio-container');
+        const messageBox = document.getElementById('message-box');
+        const messageText = document.getElementById('message-text');
+        const messageOkBtn = document.getElementById('message-ok-btn');
+
+        // --- State ---
+        let currentMode = 'strumming'; 
+        let sampler;
+        let reverb;
+        let audioReady = false;
+        let activeChordKey = null;
+        let activeChordType = 'minor';
+        let isSharpActive = false;
+        let isSeventhActive = false;
+        let autoStrumSequence;
+        let isAutoStrumming = false;
+        let pluckSequence;
+        let isScriptPlaying = false;
+        let selectedStringIndex = null;
+        let capoPosition = 0;
+
+        // --- Data ---
+        const openNotes = ['E4', 'B3', 'G3', 'D3', 'A2', 'E2'];
+        const NUM_FRETS = 12;
+        const chords = {
+            'a': {
+                major: { name: 'A Major', notes: ['E4', 'C#4', 'A3', 'E3', 'A2', 'X'] },
+                minor: { name: 'A Minor', notes: ['E4', 'C4', 'A3', 'E3', 'A2', 'X'] },
+                dom7: { name: 'A7', notes: ['E4', 'C#4', 'G3', 'E3', 'A2', 'X'] },
+                minor7: { name: 'Am7', notes: ['E4', 'C4', 'G3', 'E3', 'A2', 'X'] }
+            },
+            'b': {
+                major: { name: 'B Major', notes: ['F#4', 'D#4', 'B3', 'F#3', 'B2', 'X'] },
+                minor: { name: 'B Minor', notes: ['F#4', 'D4', 'B3', 'F#3', 'B2', 'X'] },
+                dom7: { name: 'B7', notes: ['F#4', 'D#4', 'A3', 'F#3', 'B2', 'X'] },
+                minor7: { name: 'Bm7', notes: ['F#4', 'D4', 'A3', 'F#3', 'B2', 'X'] }
+            },
+            'c': {
+                major: { name: 'C Major', notes: ['E4', 'C4', 'G3', 'E3', 'C3', 'X'] },
+                minor: { name: 'C Minor', notes: ['G4', 'D#4', 'C4', 'G3', 'C3', 'X'] },
+                dom7: { name: 'C7', notes: ['E4', 'C4', 'G3', 'A#3', 'C3', 'X'] },
+                minor7: { name: 'Cm7', notes: ['G4', 'D#4', 'A#3', 'G3', 'C3', 'X'] }
+            },
+            'd': {
+                major: { name: 'D Major', notes: ['F#4', 'D4', 'A3', 'D3', 'X', 'X'] },
+                minor: { name: 'D Minor', notes: ['F4', 'D4', 'A3', 'D3', 'X', 'X'] },
+                dom7: { name: 'D7', notes: ['F#4', 'D4', 'A3', 'C4', 'X', 'X'] },
+                minor7: { name: 'Dm7', notes: ['F4', 'D4', 'A3', 'C4', 'X', 'X'] }
+            },
+            'e': {
+                major: { name: 'E Major', notes: ['E4', 'B3', 'G#3', 'E3', 'B2', 'E2'] },
+                minor: { name: 'E Minor', notes: ['E4', 'B3', 'G3', 'E3', 'B2', 'E2'] },
+                dom7: { name: 'E7', notes: ['E4', 'B3', 'G#3', 'D3', 'B2', 'E2'] },
+                minor7: { name: 'Em7', notes: ['E4', 'B3', 'G3', 'D3', 'B2', 'E2'] }
+            },
+            'f': {
+                major: { name: 'F Major', notes: ['F4', 'C4', 'A3', 'F3', 'C3', 'F2'] },
+                minor: { name: 'F Minor', notes: ['G#4', 'C#4', 'F4', 'F3', 'C3', 'F2'] },
+                dom7: { name: 'F7', notes: ['F4', 'C4', 'A#3', 'F3', 'C3', 'F2'] },
+                minor7: { name: 'Fm7', notes: ['G#4', 'C#4', 'G#3', 'F3', 'C3', 'F2'] }
+            },
+            'g': {
+                major: { name: 'G Major', notes: ['G4', 'B3', 'G3', 'D3', 'B2', 'G2'] },
+                minor: { name: 'G Minor', notes: ['G4', 'D4', 'A#3', 'G3', 'D3', 'G2'] },
+                dom7: { name: 'G7', notes: ['F4', 'B3', 'G3', 'D3', 'B2', 'G2'] },
+                minor7: { name: 'Gm7', notes: ['F4', 'D4', 'A#3', 'G3', 'D3', 'G2'] }
+            }
+        };
+        const noteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+        const stringSelectKeys = { 'h': 0, 'g': 1, 'f': 2, 'd': 3, 's': 4, 'a': 5 }; // High e to low E
+        const fretSelectKeys = { '0':0, '1':1, '2':2, '3':3, '4':4, '5':5, '6':6, '7':7, '8':8, '9':9, '-':10, '=':11 };
+
+        // --- Note Calculation ---
+        function midiToNoteName(midi) {
+            const octave = Math.floor(midi / 12) - 1;
+            const noteIndex = midi % 12;
+            return noteNames[noteIndex] + octave;
+        }
+
+        function noteNameToMidi(noteName) {
+            const pitch = noteName.slice(0, -1);
+            const octave = parseInt(noteName.slice(-1));
+            const noteIndex = noteNames.indexOf(pitch);
+            return noteIndex + (octave + 1) * 12;
+        }
+
+        // --- Initialization ---
+        startAudioBtn.addEventListener('click', async () => {
+            if (audioReady) return;
+            await Tone.start();
+
+            startAudioBtn.disabled = true;
+            startAudioBtn.textContent = 'Loading realistic sounds...';
+
+            reverb = new Tone.Reverb({ decay: 4, wet: 0.3 }).toDestination();
+
+            sampler = new Tone.Sampler({
+                urls: {
+                    'A2': 'A2.mp3', 'A3': 'A3.mp3', 'A#3': 'As3.mp3', 'B2': 'B2.mp3', 'B3': 'B3.mp3', 
+                    'C3': 'C3.mp3', 'C4': 'C4.mp3', 'C#3': 'Cs3.mp3', 'C#4': 'Cs4.mp3', 'D3': 'D3.mp3', 
+                    'D4': 'D4.mp3', 'D#3': 'Ds3.mp3', 'D#4': 'Ds4.mp3', 'E2': 'E2.mp3', 'E3': 'E3.mp3', 'E4': 'E4.mp3', 
+                    'F2': 'F2.mp3', 'F3': 'F3.mp3', 'F4': 'F4.mp3', 'F#2': 'Fs2.mp3', 'F#3': 'Fs3.mp3', 'F#4': 'Fs4.mp3', 
+                    'G2': 'G2.mp3', 'G3': 'G3.mp3', 'G4': 'G4.mp3', 'G#2': 'Gs2.mp3', 'G#3': 'Gs3.mp3', 'G#4': 'Gs4.mp3'
+                },
+                baseUrl: "https://nbrosowsky.github.io/tonejs-instruments/samples/guitar-acoustic/",
+                onload: () => {
+                    audioReady = true;
+                    startAudioContainer.style.display = 'none';
+                    controlPanel.style.display = 'block';
+                    setMode('strumming');
+                    setupAutoStrummer(patternInput.value);
+                    console.log('Guitar samples loaded and ready.');
+                },
+                onerror: (error) => {
+                    console.error("Error loading sample:", error);
+                    showMessage("Failed to load some guitar sounds. Please try refreshing the page.");
+                }
+            }).connect(reverb);
+        });
+        
+        // --- UI Functions ---
+        messageOkBtn.addEventListener('click', () => messageBox.classList.add('hidden'));
+
+        function showMessage(text) {
+            messageText.textContent = text;
+            messageBox.classList.remove('hidden');
+        }
+
+        function setMode(mode) {
+            currentMode = mode;
+            selectedStringIndex = null;
+            if (isAutoStrumming) toggleAutoStrumBtn.click();
+            if (isScriptPlaying) toggleScriptBtn.click();
+            
+            if (mode === 'strumming') {
+                strumModeBtn.classList.add('active', 'border-blue-500');
+                pluckModeBtn.classList.remove('active', 'border-blue-500');
+                strummingTab.classList.add('active');
+                pluckingTab.classList.remove('active');
+                createStaticFretboard();
+            } else {
+                pluckModeBtn.classList.add('active', 'border-blue-500');
+                strumModeBtn.classList.remove('active', 'border-blue-500');
+                pluckingTab.classList.add('active');
+                strummingTab.classList.remove('active');
+                createVisualFretboard();
+            }
+        }
+
+        function updateChordDisplay() {
+            sharpIndicator.style.opacity = isSharpActive ? '1' : '0';
+            seventhIndicator.style.opacity = isSeventhActive ? '1' : '0';
+
+            if (!activeChordKey) {
+                chordDisplayText.textContent = 'No Chord Selected';
+                return;
+            }
+
+            let key = isSharpActive ? activeChordKey + '#' : activeChordKey;
+            if (!chords[key]) key = activeChordKey;
+
+            const chordData = chords[key]?.[activeChordType];
+            
+            if (chordData) {
+                chordDisplayText.textContent = `Holding: ${chordData.name}`;
+            } else {
+                chordDisplayText.textContent = 'Chord Not Found';
+            }
+        }
+
+        // --- Guitar Logic ---
+        function createStaticFretboard() {
+            fretboardContainer.innerHTML = '';
+             openNotes.forEach((note, index) => {
+                const stringRow = document.createElement('div');
+                stringRow.className = 'string-row';
+                const stringLine = document.createElement('div');
+                stringLine.className = 'string-line';
+                stringLine.style.height = `${6 - index * 0.75}px`;
+                stringRow.appendChild(stringLine);
+                fretboardContainer.appendChild(stringRow);
+            });
+        }
+
+        function createVisualFretboard() {
+            fretboardContainer.innerHTML = '';
+            openNotes.forEach((openNote, stringIndex) => {
+                const stringRow = document.createElement('div');
+                stringRow.className = 'string-row';
+                stringRow.id = `string-row-${stringIndex}`;
+
+                const stringLine = document.createElement('div');
+                stringLine.className = 'string-line';
+                stringLine.style.height = `${6 - stringIndex * 0.75}px`;
+                stringRow.appendChild(stringLine);
+
+                const fretContainer = document.createElement('div');
+                fretContainer.className = 'fret-container';
+
+                for (let fret = 0; fret <= NUM_FRETS; fret++) {
+                    const fretCell = document.createElement('div');
+                    fretCell.className = 'fret-cell';
+                    fretCell.style.width = fret === 0 ? '5%' : `${95 / NUM_FRETS}%`;
+                    fretCell.dataset.string = stringIndex;
+                    fretCell.dataset.fret = fret;
+                    const dot = document.createElement('div');
+                    dot.className = 'fret-dot';
+                    fretCell.appendChild(dot);
+                    fretContainer.appendChild(fretCell);
+                }
+                stringRow.appendChild(fretContainer);
+                fretboardContainer.appendChild(stringRow);
+            });
+        }
+
+        function lightUpFret(stringIndex, fretNumber) {
+            const fretCell = document.querySelector(`.fret-cell[data-string='${stringIndex}'][data-fret='${fretNumber}']`);
+            if (fretCell) {
+                fretCell.classList.add('played');
+                setTimeout(() => {
+                    fretCell.classList.remove('played');
+                }, 300);
+            }
+        }
+
+        function highlightString(stringIndex) {
+            document.querySelectorAll('.string-row').forEach(row => row.classList.remove('selected'));
+            if (stringIndex !== null) {
+                document.getElementById(`string-row-${stringIndex}`).classList.add('selected');
+            }
+        }
+
+        function animateString(stringEl) {
+            stringEl.classList.add('vibrating');
+            setTimeout(() => stringEl.classList.remove('vibrating'), 200);
+        }
+
+        function playSlap() {
+            if (!audioReady) return;
+            sampler.triggerAttackRelease('E1', '16n');
+            guitarNeck.classList.add('slapped');
+            setTimeout(() => guitarNeck.classList.remove('slapped'), 100);
+        }
+
+        function strum(direction = 'down') {
+            if (!audioReady) return;
+            
+            let notesForStrumming = openNotes;
+            if (activeChordKey) {
+                let key = isSharpActive ? activeChordKey + '#' : activeChordKey;
+                if (!chords[key]) key = activeChordKey;
+
+                const chordData = chords[key]?.[activeChordType];
+                if (chordData) {
+                    notesForStrumming = chordData.notes;
+                } else {
+                    notesForStrumming = [];
+                }
+            }
+
+            const finalNotes = notesForStrumming.map(note => {
+                if (note === 'X' || capoPosition === 0) return note;
+                const midi = noteNameToMidi(note);
+                return midiToNoteName(midi + capoPosition);
+            });
+
+            const stringElements = Array.from(fretboardContainer.querySelectorAll('.string-line'));
+            const now = Tone.now();
+            const strumDelay = 0.03;
+
+            const notesInOrder = direction === 'down' ? finalNotes : [...finalNotes].reverse();
+            const elementsInOrder = direction === 'down' ? stringElements : [...stringElements].reverse();
+            
+            notesInOrder.forEach((note, index) => {
+                if (note !== 'X') {
+                    sampler.triggerAttackRelease(note, "1n", now + index * strumDelay);
+                    Tone.Draw.schedule(() => {
+                        if (elementsInOrder[index]) animateString(elementsInOrder[index]);
+                    }, now + index * strumDelay);
+                }
+            });
+        }
+
+        // --- Auto Logic ---
+        function parsePattern(patternString) {
+            return patternString.toUpperCase().split('').map(char => {
+                if (char === 'D') return { type: 'strum', direction: 'down' };
+                if (char === 'U') return { type: 'strum', direction: 'up' };
+                if (char === 'S') return { type: 'slap' };
+                return null;
+            });
+        }
+
+        function setupAutoStrummer(patternString) {
+            if (autoStrumSequence) {
+                autoStrumSequence.stop();
+                autoStrumSequence.dispose();
+            }
+            const pattern = parsePattern(patternString);
+            autoStrumSequence = new Tone.Sequence((time, event) => {
+                if (event) {
+                    if (event.type === 'strum') {
+                        strum(event.direction);
+                    } else if (event.type === 'slap') {
+                        playSlap();
+                    }
+                }
+            }, pattern, "8n");
+            
+            if (isAutoStrumming) autoStrumSequence.start(0);
+        }
+
+        function parsePluckScript(scriptText) {
+            const events = [];
+            const parts = scriptText.trim().split(/\s+/);
+            let timeIndex = 0;
+
+            parts.forEach(part => {
+                const notePattern = /([ASDFGH])\((\d{1,2})\)/i;
+                const match = part.match(notePattern);
+
+                if (match) {
+                    const key = match[1].toLowerCase();
+                    const fret = parseInt(match[2]);
+                    if (stringSelectKeys.hasOwnProperty(key) && fret <= NUM_FRETS) {
+                        const stringIndex = stringSelectKeys[key];
+                        const openMidi = noteNameToMidi(openNotes[stringIndex]);
+                        const note = midiToNoteName(openMidi + fret);
+                        events.push({ time: timeIndex * Tone.Time("8n"), note, string: stringIndex, fret });
+                    }
+                }
+                timeIndex++;
+            });
+            return events;
+        }
+        
+        // --- Event Listeners ---
+        strumModeBtn.addEventListener('click', () => setMode('strumming'));
+        pluckModeBtn.addEventListener('click', () => setMode('plucking'));
+
+        strumDownBtn.addEventListener('click', () => strum('down'));
+        strumUpBtn.addEventListener('click', () => strum('up'));
+        
+        clearChordBtn.addEventListener('click', () => {
+            activeChordKey = null;
+            isSharpActive = false;
+            isSeventhActive = false;
+            updateChordDisplay();
+        });
+
+        toggleAutoStrumBtn.addEventListener('click', () => {
+            if (!audioReady) return;
+            isAutoStrumming = !isAutoStrumming;
+            if (isAutoStrumming) {
+                Tone.Transport.start();
+                if (autoStrumSequence) autoStrumSequence.start(0);
+                toggleAutoStrumBtn.textContent = 'Stop';
+                toggleAutoStrumBtn.classList.replace('bg-purple-500', 'bg-red-500');
+            } else {
+                Tone.Transport.stop();
+                if (autoStrumSequence) autoStrumSequence.stop();
+                toggleAutoStrumBtn.textContent = 'Start';
+                toggleAutoStrumBtn.classList.replace('bg-red-500', 'bg-purple-500');
+            }
+        });
+
+        tempoSlider.addEventListener('input', (e) => {
+            if (!audioReady) return;
+            Tone.Transport.bpm.value = e.target.value;
+            tempoDisplay.textContent = e.target.value;
+        });
+        pluckTempoSlider.addEventListener('input', (e) => {
+            if (!audioReady) return;
+            Tone.Transport.bpm.value = e.target.value;
+            pluckTempoDisplay.textContent = e.target.value;
+        });
+
+        savePatternBtn.addEventListener('click', () => {
+            if (!audioReady) return;
+            setupAutoStrummer(patternInput.value);
+            showMessage("Strumming pattern saved!");
+        });
+
+        toggleScriptBtn.addEventListener('click', () => {
+            if (!audioReady) return;
+            isScriptPlaying = !isScriptPlaying;
+
+            if (isScriptPlaying) {
+                if (pluckSequence) {
+                    pluckSequence.stop();
+                    pluckSequence.dispose();
+                }
+                const events = parsePluckScript(scriptInput.value);
+                if (events.length === 0) {
+                    isScriptPlaying = false;
+                    return;
+                }
+
+                pluckSequence = new Tone.Part((time, value) => {
+                    sampler.triggerAttackRelease(value.note, "8n", time);
+                    Tone.Draw.schedule(() => {
+                        lightUpFret(value.string, value.fret);
+                        highlightString(value.string);
+                        const stringLine = document.getElementById(`string-row-${value.string}`).querySelector('.string-line');
+                        if(stringLine) animateString(stringLine);
+                    }, time);
+                }, events);
+                
+                pluckSequence.loop = true;
+                pluckSequence.loopEnd = events.length * Tone.Time("8n");
+                Tone.Transport.start();
+                pluckSequence.start(0);
+                toggleScriptBtn.textContent = 'Stop Script';
+                toggleScriptBtn.classList.replace('bg-teal-500', 'bg-red-500');
+            } else {
+                Tone.Transport.stop();
+                if (pluckSequence) pluckSequence.stop();
+                toggleScriptBtn.textContent = 'Play Script';
+                toggleScriptBtn.classList.replace('bg-red-500', 'bg-teal-500');
+            }
+        });
+        
+        capoSlider.addEventListener('input', (e) => {
+            capoPosition = parseInt(e.target.value);
+            capoDisplay.textContent = capoPosition;
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (!audioReady || document.activeElement === patternInput || document.activeElement === scriptInput) return;
+
+            const key = event.key;
+            const lowerKey = key.toLowerCase();
+
+            if (currentMode === 'strumming') {
+                if (key === ' ') { // Slap effect
+                    event.preventDefault();
+                    playSlap();
+                }
+                else if (key === '1') {
+                    isSharpActive = !isSharpActive;
+                    updateChordDisplay();
+                } else if (key === '7') {
+                    isSeventhActive = !isSeventhActive;
+                    updateChordDisplay();
+                } else if (chords[lowerKey]) {
+                    activeChordKey = lowerKey;
+                    if (isSeventhActive) {
+                        activeChordType = event.shiftKey ? 'dom7' : 'minor7';
+                    } else {
+                        activeChordType = event.shiftKey ? 'major' : 'minor';
+                    }
+                    updateChordDisplay();
+                } else if (key === 'ArrowDown') {
+                    event.preventDefault(); 
+                    strum('down');
+                } else if (key === 'ArrowUp') {
+                    event.preventDefault(); 
+                    strum('up');
+                }
+            } else { // Plucking Mode Logic
+                if (stringSelectKeys.hasOwnProperty(lowerKey)) {
+                    selectedStringIndex = stringSelectKeys[lowerKey];
+                    highlightString(selectedStringIndex);
+                } else if (fretSelectKeys.hasOwnProperty(key) && selectedStringIndex !== null) {
+                    event.preventDefault();
+                    const fretNumber = fretSelectKeys[key];
+                    const openMidi = noteNameToMidi(openNotes[selectedStringIndex]);
+                    const noteToPlay = midiToNoteName(openMidi + fretNumber);
+                    
+                    if (event.shiftKey) { // Slide/Hammer-on
+                        sampler.release = 0.2;
+                        sampler.triggerAttackRelease(noteToPlay, '1n');
+                        setTimeout(() => sampler.release = 1, 200);
+                    } else { // Normal pluck
+                        sampler.triggerAttackRelease(noteToPlay, '1n');
+                    }
+
+                    lightUpFret(selectedStringIndex, fretNumber);
+                    const stringLine = document.getElementById(`string-row-${selectedStringIndex}`).querySelector('.string-line');
+                    if(stringLine) animateString(stringLine);
+                }
+            }
+        });
+        
+        // --- Initial Load ---
+        window.onload = () => {
+            setMode('strumming');
+        };
+    </script>
+</body>
+</html>
